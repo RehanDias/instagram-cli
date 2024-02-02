@@ -1,12 +1,13 @@
+// Import necessary modules
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
+// Base URL for Instagram feed
 const baseFeedUrl = "https://www.instagram.com/api/v1/feed/user/";
 
-// Your cookies and headers
-const cookie =
-  '...'
+// Your Instagram cookies and headers
+const cookie = "...";
 const userAgent =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
 
@@ -22,6 +23,7 @@ const headers = {
   "X-Requested-With": "XMLHttpRequest",
 };
 
+// Function to clear the console based on the platform
 function clearConsole() {
   if (process.platform === "win32") {
     require("child_process").spawnSync("cmd", ["/c", "cls"], {
@@ -32,34 +34,132 @@ function clearConsole() {
   }
 }
 
+// Function to download Instagram stories
+async function downloadStories(username, story) {
+  // Set up folder path to save stories
+  const folderPath = path.join(__dirname, username, "Stories");
+
+  // Generate formatted file name based on timestamp and media type
+  const formattedDateTime = getFormattedDateTime(story.taken_at);
+  const fileExtension = story.video_versions ? "mp4" : "jpg";
+  const fileName = `${username}_stories_${formattedDateTime}.${fileExtension}`;
+  const filePath = path.join(folderPath, fileName);
+
+  // Check if the folder exists, if not, create it
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+
+  // Check if the file already exists, if not, download the story
+  if (fs.existsSync(filePath)) {
+    console.log(`File already exists: ${fileName}. Skipping download.`);
+  } else {
+    try {
+      const mediaUrl = story.video_versions
+        ? story.video_versions[0].url
+        : story.image_versions2.candidates[0].url;
+
+      // Use Axios to download the media stream and save it to the file
+      const response = await axios.get(mediaUrl, {
+        responseType: "stream",
+        headers: headers,
+        timeout: 10000,
+      });
+
+      // Pipe the response stream to a writable stream (file)
+      response.data.pipe(fs.createWriteStream(filePath)).on("finish", () => {
+        console.log(`Download Complete: ${fileName}`);
+      });
+    } catch (error) {
+      console.error("Error downloading story media:", error.message);
+    }
+  }
+}
+
+// Function to fetch user ID and then fetch stories
+async function fetchUserIdAndFetchStories(username) {
+  try {
+    // Fetch user ID using the provided username
+    const userId = await fetchUserId(username);
+    // Pass the username and user ID to fetchStories function
+    fetchStories(username, userId);
+  } catch (error) {
+    console.error("Error:", error.message);
+  }
+}
+
+// Function to fetch stories based on username and user ID
+async function fetchStories(username, userId) {
+  // Construct the URL for fetching stories
+  const storiesUrl = `https://www.instagram.com/api/v1/feed/reels_media/?reel_ids=${userId}`;
+
+  try {
+    // Make a GET request to fetch stories
+    const response = await axios.get(storiesUrl, { headers: headers });
+    const data = response.data;
+
+    // Check if stories are available in the response
+    if (data.reels_media && data.reels_media.length > 0) {
+      const items = data.reels_media[0].items;
+
+      // Iterate through each story item and download it
+      for (const item of items) {
+        if (item.video_versions && item.video_versions.length > 0) {
+          await downloadStories(username, item);
+        } else if (item.image_versions2) {
+          await downloadStories(username, item);
+        }
+      }
+    } else {
+      console.log("No stories found for this user.");
+    }
+  } catch (error) {
+    console.error("Error fetching stories:", error.message);
+  }
+}
+
+// Function to get user input and initiate the fetch process
 function getUserInputAndFetch() {
   clearConsole();
 
   console.log("Choose an option:");
   console.log("1. Download all posts");
-  console.log("2. Exit");
+  console.log("2. Download stories");
+  console.log("3. Exit");
 
+  // Create an interface for reading user input
   const readline = require("readline").createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
-  readline.question("Enter your choice (1 or 2): ", (choice) => {
+  // Prompt the user to enter their choice
+  readline.question("Enter your choice (1, 2, or 3): ", (choice) => {
     if (choice === "1") {
+      // If choice is 1, prompt for Instagram username and initiate post download
       readline.question("Enter Instagram username: ", (username) => {
         fetchUserIdAndFetchFeed(username);
         readline.close();
       });
     } else if (choice === "2") {
+      // If choice is 2, prompt for Instagram username and initiate story download
+      readline.question("Enter Instagram username: ", (username) => {
+        fetchUserIdAndFetchStories(username);
+        readline.close();
+      });
+    } else if (choice === "3") {
+      // If choice is 3, exit the program
       console.log("Exiting the program.");
       readline.close();
     } else {
-      console.log("Invalid choice. Please enter 1 or 2.");
+      // Handle invalid choices
+      console.log("Invalid choice. Please enter 1, 2, or 3.");
       readline.close();
     }
   });
 }
 
+// Function to fetch user ID and initiate the post download process
 function fetchUserIdAndFetchFeed(username) {
   fetchUserId(username)
     .then((userId) => {
@@ -70,13 +170,17 @@ function fetchUserIdAndFetchFeed(username) {
     });
 }
 
+// Function to fetch user ID based on the provided username
 function fetchUserId(username) {
+  // Construct the initial feed URL for fetching user ID
   const initialFeedUrl = `${baseFeedUrl}${username}/username/?count=12`;
 
+  // Make a GET request to fetch user ID
   return axios
     .get(initialFeedUrl, { headers: headers })
     .then((response) => {
       const data = response.data;
+      // Check if user ID is available in the response
       if (data.user && data.user.pk_id) {
         return data.user.pk_id;
       } else {
@@ -89,22 +193,30 @@ function fetchUserId(username) {
     });
 }
 
+// Function to fetch and download user posts recursively
 async function fetchFeed(userId, username, maxId = null, postNumber = 1) {
   let feedUrl = `${baseFeedUrl}${userId}/?count=12`;
 
+  // Append max_id if provided
   if (maxId) {
     feedUrl += `&max_id=${maxId}`;
   }
 
+  // Make a GET request to fetch user feed
   const response = await axios.get(feedUrl, { headers: headers });
   const data = response.data;
 
+  // Check if posts are available in the response
   if (data.items && data.items.length > 0) {
     totalPostsToDownload = data.items.length;
+
+    // Iterate through each post item
     for (const item of data.items) {
       const postIndex = postNumber + postNumber - 1;
 
+      // Check if the post is a carousel with multiple media
       if (item.carousel_media && item.carousel_media.length > 0) {
+        // Iterate through each carousel item and handle it
         for (
           let carouselIndex = 1;
           carouselIndex <= item.carousel_media.length;
@@ -117,11 +229,13 @@ async function fetchFeed(userId, username, maxId = null, postNumber = 1) {
           );
         }
       } else {
+        // Handle single media post
         await handleSingleItem(username, item);
       }
     }
   }
 
+  // Check if there is a next_max_id, fetch the next page of posts recursively
   const nextMaxId = data.next_max_id;
   if (nextMaxId) {
     await fetchFeed(
@@ -135,9 +249,11 @@ async function fetchFeed(userId, username, maxId = null, postNumber = 1) {
   }
 }
 
+// Function to handle carousel items (multiple media in a post)
 async function handleCarouselItem(username, carouselItem, carouselIndex) {
   if (carouselItem.video_versions && carouselItem.video_versions.length > 0) {
     const videoUrl = carouselItem.video_versions[0].url;
+    // Download carousel video
     await downloadMedia(
       username,
       videoUrl,
@@ -147,6 +263,7 @@ async function handleCarouselItem(username, carouselItem, carouselIndex) {
     );
   } else if (carouselItem.image_versions2) {
     const imageUrl = carouselItem.image_versions2.candidates[0].url;
+    // Download carousel image
     await downloadMedia(
       username,
       imageUrl,
@@ -157,16 +274,20 @@ async function handleCarouselItem(username, carouselItem, carouselIndex) {
   }
 }
 
+// Function to handle single media items (non-carousel)
 async function handleSingleItem(username, item) {
   if (item.video_versions && item.video_versions.length > 0) {
     const videoUrl = item.video_versions[0].url;
+    // Download single video
     await downloadMedia(username, videoUrl, "video", item.taken_at);
   } else if (item.image_versions2) {
     const imageUrl = item.image_versions2.candidates[0].url;
+    // Download single image
     await downloadMedia(username, imageUrl, "image", item.taken_at);
   }
 }
 
+// Function to download media (image or video) with retry mechanism
 function downloadMedia(
   username,
   mediaUrl,
@@ -184,14 +305,17 @@ function downloadMedia(
     const fileName = `${username}_${formattedDateTime}${indexSuffix}.${fileExtension}`;
     const filePath = path.join(folderPath, fileName);
 
+    // Check if the folder exists, if not, create it
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
 
+    // Check if the file already exists, if yes, skip download
     if (fs.existsSync(filePath)) {
       console.log(`File already exists: ${fileName}. Skipping download.`);
       resolve();
     } else {
+      // Use Axios to download the media stream and save it to the file
       axios({
         method: "get",
         url: mediaUrl,
@@ -200,6 +324,7 @@ function downloadMedia(
         timeout: 10000,
       })
         .then((response) => {
+          // Pipe the response stream to a writable stream (file)
           response.data
             .pipe(fs.createWriteStream(filePath))
             .on("finish", () => {
@@ -210,6 +335,7 @@ function downloadMedia(
         .catch((error) => {
           console.error("Error downloading media:", error.message);
 
+          // Retry the download if there are retries left
           if (retries > 0) {
             console.log(`Retrying download (${retries} retries left)...`);
             setTimeout(() => {
@@ -233,6 +359,7 @@ function downloadMedia(
   });
 }
 
+// Function to format timestamp into a string
 function getFormattedDateTime(timestamp) {
   const jakartaTime = new Date(timestamp * 1000);
 
@@ -246,4 +373,5 @@ function getFormattedDateTime(timestamp) {
   return `${year}${month}${day}_${hours}${minutes}${seconds}`;
 }
 
+// Start the program by prompting the user for input
 getUserInputAndFetch();
