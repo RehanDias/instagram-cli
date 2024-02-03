@@ -23,6 +23,7 @@ const headers = {
   "X-Requested-With": "XMLHttpRequest",
 };
 
+
 // Function to clear the console based on the platform
 function clearConsole() {
   if (process.platform === "win32") {
@@ -141,8 +142,15 @@ async function fetchStories(username, userId) {
     } else {
       console.log("No stories found for this user.");
     }
+    const downloadMore = await askToDownloadMore();
+    if (downloadMore) {
+      getUserInputAndFetch(); // Restart the program
+    } else {
+      console.log("Exiting the program.");
+    }
   } catch (error) {
     console.error("Error fetching stories:", error.message);
+    getUserInputAndFetch();
   }
 }
 // Function to check if a story has already been downloaded
@@ -155,9 +163,7 @@ async function isStoryDownloaded(username, story) {
   // Check if the file already exists
   return fs.existsSync(filePath);
 }
-
-// Function to get user input and initiate the fetch process
-function getUserInputAndFetch() {
+async function getUserInputAndFetch() {
   clearConsole();
 
   console.log("Choose an option:");
@@ -165,14 +171,12 @@ function getUserInputAndFetch() {
   console.log("2. Download stories");
   console.log("3. Exit");
 
-  // Create an interface for reading user input
   const readline = require("readline").createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
-  // Prompt the user to enter their choice
-  readline.question("Enter your choice (1, 2, or 3): ", (choice) => {
+  readline.question("Enter your choice (1, 2, or 3): ", async (choice) => {
     switch (choice) {
       case "1":
         // If choice is 1, prompt for Instagram username and initiate post download
@@ -202,13 +206,39 @@ function getUserInputAndFetch() {
   });
 }
 
-// Function to fetch user ID and initiate the post download process
+// Define an asynchronous function that prompts the user to confirm if they want to download more posts/stories
+async function askToDownloadMore() {
+  // Return a Promise that resolves to the user's choice
+  return new Promise((resolve) => {
+    // Create an interface to read user input from the console
+    const readline = require("readline").createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    // Ask the user for input and resolve the Promise based on their response
+    readline.question(
+      "Do you want to download more posts/stories? (Y/n): ",
+      (answer) => {
+        // Close the readline interface after getting the answer
+        readline.close();
+        // Resolve the Promise with a boolean indicating the user's choice
+        resolve(answer.toLowerCase() === "y");
+      }
+    );
+  });
+}
+
+// Function to fetch user ID based on the given username and initiate the post download process
 function fetchUserIdAndFetchFeed(username) {
+  // Fetch the user ID using the provided username
   fetchUserId(username)
     .then((userId) => {
+      // Once the user ID is obtained, initiate the process of fetching the user's feed using the fetched user ID and username
       fetchFeed(userId, username);
     })
     .catch((error) => {
+      // If there's an error during the process, log the error message to the console
       console.error("Error:", error.message);
     });
 }
@@ -289,6 +319,14 @@ async function fetchFeed(userId, username, maxId = null, postNumber = 1) {
     );
   } else {
     console.log("All downloads are complete!");
+
+    // Ask the user if they want to download more posts
+    const downloadMore = await askToDownloadMore();
+    if (downloadMore) {
+      getUserInputAndFetch(); // Restart the program
+    } else {
+      console.log("Exiting the program.");
+    }
   }
 }
 
@@ -418,4 +456,3 @@ function getFormattedDateTime(timestamp) {
 
 // Start the program by prompting the user for input
 getUserInputAndFetch();
-
