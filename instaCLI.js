@@ -33,49 +33,6 @@ function clearConsole() {
     console.clear();
   }
 }
-
-// Function to download Instagram stories
-async function downloadStories(username, story) {
-  // Set up folder path to save stories
-  const folderPath = path.join(__dirname, username, "Stories");
-
-  // Generate formatted file name based on timestamp and media type
-  const formattedDateTime = getFormattedDateTime(story.taken_at);
-  const fileExtension = story.video_versions ? "mp4" : "jpg";
-  const fileName = `${username}_stories_${formattedDateTime}.${fileExtension}`;
-  const filePath = path.join(folderPath, fileName);
-
-  // Check if the folder exists, if not, create it
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
-  }
-
-  // Check if the file already exists, if not, download the story
-  if (fs.existsSync(filePath)) {
-    console.log(`File already exists: ${fileName}. Skipping download.`);
-  } else {
-    try {
-      const mediaUrl = story.video_versions
-        ? story.video_versions[0].url
-        : story.image_versions2.candidates[0].url;
-
-      // Use Axios to download the media stream and save it to the file
-      const response = await axios.get(mediaUrl, {
-        responseType: "stream",
-        headers: headers,
-        timeout: 10000,
-      });
-
-      // Pipe the response stream to a writable stream (file)
-      response.data.pipe(fs.createWriteStream(filePath)).on("finish", () => {
-        console.log(`Download Complete: ${fileName}`);
-      });
-    } catch (error) {
-      console.error("Error downloading story media:", error.message);
-    }
-  }
-}
-
 // Function to fetch user ID and then fetch stories
 async function fetchUserIdAndFetchStories(username) {
   try {
@@ -88,6 +45,52 @@ async function fetchUserIdAndFetchStories(username) {
   }
 }
 
+// Function to download Instagram stories
+async function downloadStories(username, story) {
+  return new Promise(async (resolve, reject) => {
+    // Set up folder path to save stories
+    const folderPath = path.join(__dirname, username, "Stories");
+
+    // Generate formatted file name based on timestamp and media type
+    const formattedDateTime = getFormattedDateTime(story.taken_at);
+    const fileExtension = story.video_versions ? "mp4" : "jpg";
+    const fileName = `${username}_stories_${formattedDateTime}.${fileExtension}`;
+    const filePath = path.join(folderPath, fileName);
+
+    // Check if the folder exists, if not, create it
+    if (!fs.existsSync(folderPath)) {
+      fs.mkdirSync(folderPath, { recursive: true });
+    }
+
+    // Check if the file already exists, if not, download the story
+    if (fs.existsSync(filePath)) {
+      console.log(`File already exists: ${fileName}. Skipping download.`);
+      resolve();
+    } else {
+      try {
+        const mediaUrl = story.video_versions
+          ? story.video_versions[0].url
+          : story.image_versions2.candidates[0].url;
+
+        // Use Axios to download the media stream and save it to the file
+        const response = await axios.get(mediaUrl, {
+          responseType: "stream",
+          headers: headers,
+          timeout: 10000,
+        });
+
+        // Pipe the response stream to a writable stream (file)
+        response.data.pipe(fs.createWriteStream(filePath)).on("finish", () => {
+          console.log(`Download Complete: ${fileName}`);
+          resolve(); // Resolve the promise after the download is complete
+        });
+      } catch (error) {
+        console.error("Error downloading story media:", error.message);
+        reject(error); // Reject the promise if there's an error during download
+      }
+    }
+  });
+}
 // Function to fetch stories based on username and user ID
 async function fetchStories(username, userId) {
   // Construct the URL for fetching stories
@@ -101,14 +104,39 @@ async function fetchStories(username, userId) {
     // Check if stories are available in the response
     if (data.reels_media && data.reels_media.length > 0) {
       const items = data.reels_media[0].items;
+      let downloadedCount = 0;
 
-      // Iterate through each story item and download it
+      // Create an array to store promises for each download
+      const downloadPromises = [];
+
+      // Iterate through each story item and initiate download
       for (const item of items) {
         if (item.video_versions && item.video_versions.length > 0) {
-          await downloadStories(username, item);
+          const isDownloaded = await isStoryDownloaded(username, item);
+          if (!isDownloaded) {
+            // Initiate download and add the promise to the array
+            downloadPromises.push(downloadStories(username, item));
+            downloadedCount++;
+          }
         } else if (item.image_versions2) {
-          await downloadStories(username, item);
+          const isDownloaded = await isStoryDownloaded(username, item);
+          if (!isDownloaded) {
+            downloadPromises.push(downloadStories(username, item));
+            downloadedCount++;
+          }
         }
+      }
+
+      // Wait for all download promises to resolve
+      await Promise.all(downloadPromises);
+
+      // Display appropriate message based on download status
+      if (downloadedCount > 0) {
+        console.log(`Now all the stories have been downloaded.`);
+      } else {
+        console.log(
+          `Nothing has been downloaded, everything has been downloaded.`
+        );
       }
     } else {
       console.log("No stories found for this user.");
@@ -116,6 +144,16 @@ async function fetchStories(username, userId) {
   } catch (error) {
     console.error("Error fetching stories:", error.message);
   }
+}
+// Function to check if a story has already been downloaded
+async function isStoryDownloaded(username, story) {
+  const formattedDateTime = getFormattedDateTime(story.taken_at);
+  const fileExtension = story.video_versions ? "mp4" : "jpg";
+  const fileName = `${username}_stories_${formattedDateTime}.${fileExtension}`;
+  const filePath = path.join(__dirname, username, "Stories", fileName);
+
+  // Check if the file already exists
+  return fs.existsSync(filePath);
 }
 
 // Function to get user input and initiate the fetch process
@@ -135,26 +173,31 @@ function getUserInputAndFetch() {
 
   // Prompt the user to enter their choice
   readline.question("Enter your choice (1, 2, or 3): ", (choice) => {
-    if (choice === "1") {
-      // If choice is 1, prompt for Instagram username and initiate post download
-      readline.question("Enter Instagram username: ", (username) => {
-        fetchUserIdAndFetchFeed(username);
+    switch (choice) {
+      case "1":
+        // If choice is 1, prompt for Instagram username and initiate post download
+        readline.question("Enter Instagram username: ", (username) => {
+          fetchUserIdAndFetchFeed(username);
+          readline.close();
+        });
+        break;
+      case "2":
+        // If choice is 2, prompt for Instagram username and initiate story download
+        readline.question("Enter Instagram username: ", (username) => {
+          fetchUserIdAndFetchStories(username);
+          readline.close();
+        });
+        break;
+      case "3":
+        // If choice is 3, exit the program
+        console.log("Exiting the program.");
         readline.close();
-      });
-    } else if (choice === "2") {
-      // If choice is 2, prompt for Instagram username and initiate story download
-      readline.question("Enter Instagram username: ", (username) => {
-        fetchUserIdAndFetchStories(username);
+        break;
+      default:
+        // Handle invalid choices
+        console.log("Invalid choice. Please enter 1, 2, or 3.");
         readline.close();
-      });
-    } else if (choice === "3") {
-      // If choice is 3, exit the program
-      console.log("Exiting the program.");
-      readline.close();
-    } else {
-      // Handle invalid choices
-      console.log("Invalid choice. Please enter 1, 2, or 3.");
-      readline.close();
+        break;
     }
   });
 }
@@ -375,3 +418,4 @@ function getFormattedDateTime(timestamp) {
 
 // Start the program by prompting the user for input
 getUserInputAndFetch();
+
